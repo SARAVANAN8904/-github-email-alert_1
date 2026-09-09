@@ -83,7 +83,18 @@ jobs:
             BEFORE="${{ github.event.before }}"
             AFTER="${{ github.sha }}"
 
-            git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+            # Check if this is the first push to a branch
+            if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+
+              echo "First push to this branch"
+
+              git show --pretty="" --name-only "$AFTER" > changed_files.txt
+
+            else
+
+              git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+
+            fi
 
 
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -99,6 +110,10 @@ jobs:
           if [ ! -s changed_files.txt ]; then
             echo "No changed files detected" > changed_files.txt
           fi
+
+
+          echo "Changed files:"
+          cat changed_files.txt
 
 
       # ==========================================
