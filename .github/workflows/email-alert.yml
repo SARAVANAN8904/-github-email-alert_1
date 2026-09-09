@@ -1,40 +1,228 @@
-name: GitHub Repository Change Email Alert
+name: GitHub Repository Email Alert
 
 on:
   push:
-    branches:
-      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
 
 jobs:
-  send-email:
+  repository-alert:
+
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==========================================
+      # CHECKOUT REPOSITORY
+      # ==========================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      # ==========================================
+      # GET EVENT INFORMATION
+      # ==========================================
+
+      - name: Get event information
+        id: info
+        shell: bash
+        run: |
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+
+            echo "event=Push" >> $GITHUB_OUTPUT
+
+            echo "title=Repository Changed - Push" >> $GITHUB_OUTPUT
+
+            echo "actor=${{ github.actor }}" >> $GITHUB_OUTPUT
+
+            echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+            echo "commit_url=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" >> $GITHUB_OUTPUT
+
+            echo "commit_message=${{ github.event.head_commit.message }}" >> $GITHUB_OUTPUT
+
+
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+
+            echo "event=Pull Request" >> $GITHUB_OUTPUT
+
+            echo "title=New Pull Request Activity" >> $GITHUB_OUTPUT
+
+            echo "actor=${{ github.actor }}" >> $GITHUB_OUTPUT
+
+            echo "branch=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+
+            echo "commit_url=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
+
+            echo "commit_message=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+
+          fi
+
+
+      # ==========================================
+      # GET CHANGED FILES
+      # ==========================================
+
+      - name: Get changed files
+        id: files
+        shell: bash
+        run: |
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.sha }}"
+
+            git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+
+
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+
+            git diff --name-only "$BASE...$HEAD" > changed_files.txt
+
+          fi
+
+
+          if [ ! -s changed_files.txt ]; then
+            echo "No changed files detected" > changed_files.txt
+          fi
+
+
+      # ==========================================
+      # CREATE EMAIL BODY
+      # ==========================================
+
+      - name: Create email report
+        run: |
+
+          {
+            echo "Hello,"
+            echo ""
+            echo "GitHub Repository Activity Detected!"
+            echo ""
+            echo "========================================"
+            echo ""
+            echo "Event Type:"
+            echo "${{ steps.info.outputs.event }}"
+            echo ""
+            echo "Repository:"
+            echo "${{ github.repository }}"
+            echo ""
+            echo "Branch:"
+            echo "${{ steps.info.outputs.branch }}"
+            echo ""
+            echo "Changed By:"
+            echo "${{ steps.info.outputs.actor }}"
+            echo ""
+            echo "Message:"
+            echo "${{ steps.info.outputs.commit_message }}"
+            echo ""
+            echo "Changed Files:"
+            cat changed_files.txt
+            echo ""
+            echo "Direct Link:"
+            echo "${{ steps.info.outputs.commit_url }}"
+            echo ""
+            echo "========================================"
+            echo ""
+            echo "GitHub Email Alert System"
+
+          } > email-report.txt
+
+
+      # ==========================================
+      # SEND EMAIL
+      # ==========================================
 
       - name: Send Email Alert
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v18
         with:
           server_address: smtp.gmail.com
           server_port: 465
           secure: true
+
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Repository Changed!"
+
+          subject: "${{ steps.info.outputs.title }} - ${{ github.repository }}"
+
           to: ${{ secrets.EMAIL_TO }}
-          from: GitHub Alert
+
+          from: "GitHub Alert <${{ secrets.EMAIL_USERNAME }}>"
+
+          body: file://email-report.txt
+
+
+  # ==========================================
+  # SEND EMAIL WHEN WORKFLOW FAILS
+  # ==========================================
+
+  workflow-failure-alert:
+
+    needs: repository-alert
+
+    if: failure()
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Send Failure Email
+
+        uses: dawidd6/action-send-mail@v18
+
+        with:
+
+          server_address: smtp.gmail.com
+
+          server_port: 465
+
+          secure: true
+
+          username: ${{ secrets.EMAIL_USERNAME }}
+
+          password: ${{ secrets.EMAIL_PASSWORD }}
+
+          subject: "❌ GitHub Workflow FAILED - ${{ github.repository }}"
+
+          to: ${{ secrets.EMAIL_TO }}
+
+          from: "GitHub Alert <${{ secrets.EMAIL_USERNAME }}>"
 
           body: |
             Hello,
 
-            A change has happened in your GitHub repository.
+            A GitHub Actions workflow has FAILED.
 
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit Message: ${{ github.event.head_commit.message }}
-            Changed By: ${{ github.actor }}
-            Commit ID: ${{ github.sha }}
+            Repository:
+            ${{ github.repository }}
 
-            Thank you,
+            Triggered By:
+            ${{ github.actor }}
+
+            Event:
+            ${{ github.event_name }}
+
+            Workflow:
+            ${{ github.workflow }}
+
+            Check the workflow here:
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please check the GitHub Actions logs.
+
             GitHub Email Alert System
